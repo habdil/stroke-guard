@@ -9,6 +9,7 @@ import ResultDisplay from './result-display';
 import { AlertCircle, Loader2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
+// Types
 interface PredictionResult {
   prediction: number;
   probability: number;
@@ -17,11 +18,25 @@ interface PredictionResult {
   threshold: number;
 }
 
+interface FastAPIError {
+  detail?: string | { msg: string }[];
+  error?: string;
+}
+
+const API_URL = 'https://ml-stroke-guard-production.up.railway.app';
+
 export default function PredictionForm() {
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<PredictionResult | null>(null);
   const [error, setError] = useState<string>("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+
+  const validateNumericField = (value: number, fieldName: string, min: number, max: number) => {
+    if (isNaN(value)) throw new Error(`${fieldName} must be a valid number`);
+    if (value < min || value > max) {
+      throw new Error(`${fieldName} must be between ${min} and ${max}`);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -48,9 +63,9 @@ export default function PredictionForm() {
       const bmi = parseFloat(formData.get('bmi') as string);
       const glucose = parseFloat(formData.get('avg_glucose_level') as string);
 
-      if (age < 0 || age > 120) throw new Error('Age must be between 0 and 120');
-      if (bmi < 10 || bmi > 60) throw new Error('BMI must be between 10 and 60');
-      if (glucose < 0 || glucose > 500) throw new Error('Glucose level must be between 0 and 500');
+      validateNumericField(age, 'Age', 0, 120);
+      validateNumericField(bmi, 'BMI', 10, 60);
+      validateNumericField(glucose, 'Glucose level', 0, 500);
 
       const data = {
         "age": age,
@@ -64,7 +79,7 @@ export default function PredictionForm() {
         "work_type_Govt_job": formData.get('work_type') === 'Govt_job' ? 1 : 0,
         "work_type_Never_worked": formData.get('work_type') === 'Never_worked' ? 1 : 0,
         "work_type_Private": formData.get('work_type') === 'Private' ? 1 : 0,
-        "work_type_Self-employed": formData.get('work_type') === 'Self-employed' ? 1 : 0,
+        "work_type_Self_employed": formData.get('work_type') === 'Self-employed' ? 1 : 0,
         "work_type_children": formData.get('work_type') === 'children' ? 1 : 0,
         "smoking_status_Unknown": formData.get('smoking_status') === 'Unknown' ? 1 : 0,
         "smoking_status_formerly_smoked": formData.get('smoking_status') === 'formerly smoked' ? 1 : 0,
@@ -74,7 +89,7 @@ export default function PredictionForm() {
 
       console.log('Sending data:', data);
 
-      const response = await fetch('/api/predict', {
+      const response = await fetch(`${API_URL}/predict`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -85,28 +100,65 @@ export default function PredictionForm() {
       const responseData = await response.json();
 
       if (!response.ok) {
-        throw new Error(responseData.error || responseData.details || 'Prediction failed');
+        let errorMessage = 'Prediction failed';
+        
+        if (responseData.detail) {
+          if (Array.isArray(responseData.detail)) {
+            // Handle array of validation errors
+            const firstError = responseData.detail[0];
+            errorMessage = firstError.msg || 'Validation error';
+            
+            // If it's a field required error, make it more user-friendly
+            if (firstError.type === 'missing') {
+              const fieldName = firstError.loc[firstError.loc.length - 1];
+              errorMessage = `Please fill in the ${fieldName} field`;
+            }
+          } else {
+            errorMessage = responseData.detail;
+          }
+        }
+
+        throw new Error(errorMessage);
       }
 
       console.log('Received result:', responseData);
       setResult(responseData);
-      setIsDialogOpen(true); // Open dialog when result is received
+      setIsDialogOpen(true);
     } catch (error) {
-      console.error('Prediction error:', error);
-      setError(error instanceof Error ? error.message : "Failed to make prediction. Please try again.");
+      let errorMessage = "Failed to make prediction. Please try again.";
+
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      } else if (error && typeof error === 'object' && 'detail' in error) {
+        // Handle FastAPI error format
+        const fastAPIError = error as { detail: any };
+        if (Array.isArray(fastAPIError.detail)) {
+          const firstError = fastAPIError.detail[0];
+          errorMessage = firstError.msg || 'Validation error';
+          
+          // Make field required errors more user-friendly
+          if (firstError.type === 'missing') {
+            const fieldName = firstError.loc[firstError.loc.length - 1];
+            errorMessage = `Please fill in the ${fieldName} field`;
+          }
+        } else {
+          errorMessage = String(fastAPIError.detail);
+        }
+      }
+
+      console.error('Prediction error:', { error, message: errorMessage });
+      setError(errorMessage);
     } finally {
       setIsLoading(false);
     }
-  };
+};
 
   return (
     <div className="space-y-8">
       {error && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertDescription>
-            {error}
-          </AlertDescription>
+          <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
 
