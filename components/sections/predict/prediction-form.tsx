@@ -23,7 +23,7 @@ interface FastAPIError {
   error?: string;
 }
 
-const API_URL = 'http://localhost:8000/';
+const API_URL = 'http://localhost:8000';
 
 export default function PredictionForm() {
   const [isLoading, setIsLoading] = useState(false);
